@@ -33,43 +33,70 @@ class Grid_trader:
         self.upper_price=upper_price
         self.lower_price=lower_price
         self.amount=amount
-        self.inteval_profit=(self.upper_price-self.lower_price) / self.grid_level
+        self.inteval_profit=round(self.upper_price-self.lower_price,4) / self.grid_level
         pass
 
     def place_order_init(self):
         #start cal level and place grid oreder
+        # print(self.inteval_profit)
+        bid_price, ask_price, last_price = self.send_request("get_bid_ask_price")
         for i in range(self.grid_level + 1): #  n+1 lines make n grid
-            price = self.lower_price + i * self.inteval_profit
-            bid_price, ask_price = self.send_request("get_bid_ask_price")
+            # bid_price, ask_price = self.send_request("get_bid_ask_price")
+            # print("bid_price:" + str(bid_price) + '-' + 'ask_price:' + str(ask_price))
+            price = round(self.lower_price + i * self.inteval_profit,4)
             order = Oreder_Info()
-            if  price < ask_price : 
+            # log("ask_price:" + str(ask_price))
+            if  price < last_price : 
                 order.id = self.send_request("place_order","buy",price)
                 log("place buy order id = " + str(order.id) + " in "+ str(price))
-            else:
+                self.order_list.append(order)
+            elif price > last_price:
                 order.id = self.send_request("place_order","sell",price)
                 log("place sell order id = " + str(order.id) + " in "+ str(price))
-            self.order_list.append(order)
+                self.order_list.append(order)
     
     def loop_job(self):
+        # print(len(self.order_list))
         for order in self.order_list:
+            # print("order_id:" + str(order.id))
             order_info = self.send_request("get_order",order.id)
+            # print(order_info)
             side = order_info["side"]
+            filledSize = order_info["filledSize"]
             if order_info["status"] == "closed":
                 new_order_price = 0.0
                 old_order_id = order_info["id"]
-                bid_price, ask_price = self.send_request("get_bid_ask_price")
+                bid_price, ask_price, last_price = self.send_request("get_bid_ask_price")
+                
                 msg = side + " order id : " + str(old_order_id)+" : " + str(order_info["price"]) + " completed , put "
-                if side == "buy" :
+                if side == "buy" and filledSize > 0:
                     new_order_price = float(order_info["price"]) + self.inteval_profit 
+                    # new_order_price = float(order_info["price"])
                     order.id = self.send_request("place_order","sell",new_order_price)
                     msg = msg + "sell"
+                    msg = msg + " order id : " + str(order.id) + " : " + str(new_order_price)
                     log(msg)
-                else:
+                # resend
+                elif side == "buy" and filledSize == 0:
+                    new_order_price = float(order_info["price"])
+                    order.id = self.send_request("place_order","buy",new_order_price)
+                    msg = msg + "buy [again]"
+                    msg = msg + " order id : " + str(order.id) + " : " + str(new_order_price)
+                    log(msg)
+                elif side == "sell" and filledSize > 0:
                     new_order_price = float(order_info["price"]) - self.inteval_profit
+                    # new_order_price = float(order_info["price"])
                     order.id = self.send_request("place_order","buy",new_order_price)
                     msg = msg + "buy"
-                msg = msg + " order id : " + str(order.id) + " : " + str(new_order_price)
-                log(msg)
+                    msg = msg + " order id : " + str(order.id) + " : " + str(new_order_price)
+                    log(msg)
+                # resend
+                elif side == "sell" and filledSize == 0:
+                    new_order_price = float(order_info["price"])
+                    order.id = self.send_request("place_order","sell",new_order_price)
+                    msg = msg + "sell [again]"
+                    msg = msg + " order id : " + str(order.id) + " : " + str(new_order_price)
+                    log(msg)
 
     def send_request(self,task,input1=None,input2=None):
         tries = 3
@@ -77,7 +104,7 @@ class Grid_trader:
             try:
                 if task == "get_bid_ask_price":
                     ticker =self.exchange.fetch_ticker(self.symbol)
-                    return ticker["bid"],  ticker["ask"]
+                    return ticker["bid"],  ticker["ask"], ticker["last"]
 
                 elif task == "get_order":
                     return self.exchange.fetchOrder(input1)["info"]
@@ -148,4 +175,4 @@ main_job.place_order_init()
 while True:
     print("Loop in :",datetime.datetime.now())
     main_job.loop_job()
-    time.sleep(1)
+    # time.sleep(1)
